@@ -48,6 +48,8 @@ export async function loadNacosConfig(): Promise<void> {
   const configClient = new NacosConfigClient({
     serverAddr: bootstrapConfig.nacos.serverAddr,
     namespace: bootstrapConfig.nacos.namespace,
+    username: config.nacos.username,
+    password: config.nacos.password,
     requestTimeout: 10000
   });
 
