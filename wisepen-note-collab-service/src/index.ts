@@ -1,10 +1,10 @@
-import http from 'http';
-import { WebSocketServer } from 'ws';
 import { config, loadNacosConfig } from './config';
-import { setupWebSocketServer } from './ws/connection-handler';
-import { initKafkaProducer, disconnectKafka } from './clients/kafka-producer';
-import { registerWithNacos, deregisterFromNacos } from './nacos/registry';
-import { createHttpHandler } from './http/http-handler';
+import {
+  initKafkaProducer,
+  disconnectKafka,
+} from './infrastructure/messaging/kafka-producer';
+import { registerWithNacos, deregisterFromNacos } from './infrastructure/discovery/nacos-registry';
+import { createNestServer } from './transport/http/nest-app';
 
 async function main(): Promise<void> {
   // 从 Nacos 拉取远程配置
@@ -17,12 +17,7 @@ async function main(): Promise<void> {
   // 初始化 Kafka producer
   await initKafkaProducer();
 
-  // 启动HTTP server
-  const server = http.createServer(createHttpHandler());
-
-  // 在 /note-collab/ws 路径上挂 WebSocket server
-  const wss = new WebSocketServer({ server, path: '/note-collab/ws' });
-  setupWebSocketServer(wss);
+  const { app, server } = await createNestServer();
 
   server.listen(config.port, () => {
     console.log(`[Boot] HTTP + WebSocket server listening on :${config.port}`);
@@ -32,7 +27,7 @@ async function main(): Promise<void> {
     console.log('[Shutdown] Gracefully shutting down...');
     await deregisterFromNacos();
     await disconnectKafka();
-    wss.close();
+    await app.close();
     server.close();
     process.exit(0);
   };

@@ -20,8 +20,6 @@ export const bootstrapConfig = {
     password: process.env.NACOS_PASSWORD || '',
   },
   serviceName: 'wisepen-note-collab-service',
-  noteServiceName: 'wisepen-note-service',
-  resourceServiceName: 'wisepen-resource-service',
 };
 
 // -----------------------------------------------------------------------------
