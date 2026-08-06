@@ -1,6 +1,7 @@
 # Stage 1: Builder
 FROM node:20-alpine AS builder
-RUN corepack enable && corepack prepare pnpm@latest --activate
+ARG PNPM_VERSION=10.15.1
+RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
 WORKDIR /build
 RUN pnpm config set registry https://repo.huaweicloud.com/repository/npm/
 
@@ -18,7 +19,8 @@ RUN pnpm run build
 
 # Stage 2: Runner
 FROM node:20-alpine AS runner
-RUN corepack enable && corepack prepare pnpm@latest --activate
+ARG PNPM_VERSION=10.15.1
+RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
 WORKDIR /app
 RUN pnpm config set registry https://repo.huaweicloud.com/repository/npm/
 ENV NODE_ENV=production
