@@ -3,6 +3,7 @@ import {
   Catch,
   ExceptionFilter,
   HttpException,
+  Logger,
 } from '@nestjs/common';
 import { Response } from 'express';
 import { ZodValidationException } from 'nestjs-zod';
@@ -13,6 +14,8 @@ import { HeaderInterceptError } from '../header-interceptor';
 
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
+  private readonly logger = new Logger(HttpExceptionFilter.name);
+
   catch(error: unknown, host: ArgumentsHost): void {
     const res = host.switchToHttp().getResponse<Response>();
     if (res.headersSent) return;
@@ -101,7 +104,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       return;
     }
 
-    console.error('[HTTP] Request failed', error);
+    this.logger.error('Request failed', error instanceof Error ? error.stack : String(error));
     res.status(500).json({
       code: CommonError.INTERNAL_ERROR.code,
       key: CommonError.INTERNAL_ERROR.key,

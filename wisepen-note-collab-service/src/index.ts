@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { config, loadNacosConfig } from './config';
 import {
   initKafkaProducer,
@@ -6,10 +7,12 @@ import {
 import { registerWithNacos, deregisterFromNacos } from './infrastructure/discovery/nacos-registry';
 import { createNestServer } from './transport/http/nest-app';
 
+const logger = new Logger('Boot');
+
 async function main(): Promise<void> {
   // 从 Nacos 拉取远程配置
   await loadNacosConfig();
-  console.log(`[Boot] Starting ${config.serviceName} on port ${config.port}`);
+  logger.log(`Starting ${config.serviceName} on port ${config.port}`);
 
   // 注册到 Nacos
   await registerWithNacos();
@@ -20,11 +23,11 @@ async function main(): Promise<void> {
   const { app, server } = await createNestServer();
 
   server.listen(config.port, () => {
-    console.log(`[Boot] HTTP + WebSocket server listening on :${config.port}`);
+    logger.log(`HTTP + WebSocket server listening on :${config.port}`);
   });
 
   const shutdown = async () => {
-    console.log('[Shutdown] Gracefully shutting down...');
+    logger.log('Gracefully shutting down...');
     await deregisterFromNacos();
     await disconnectKafka();
     await app.close();
@@ -38,6 +41,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error('[Boot] Fatal error:', err);
+  logger.error('Fatal error', err instanceof Error ? err.stack : String(err));
   process.exit(1);
 });

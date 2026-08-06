@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { WebSocket } from 'ws';
 import * as awarenessProtocol from 'y-protocols/awareness';
 import * as syncProtocol from 'y-protocols/sync';
@@ -9,6 +10,8 @@ import { clearOplog, trackOperation } from './yjs-operation-logger'; // 引入�
 import { startSnapshotScheduler, stopSnapshotScheduler, flushRoom } from './yjs-snapshot-flusher';
 import { Room, UserConnection, ClientIntent } from './types';
 import { loadDocFromNoteService } from './yjs-ydoc-manager';
+
+const logger = new Logger('Room');
 
 // 已创建的房间
 // 网关 APISIX 需配置基于 resourceId 的一致性哈希路由，将同一 resourceId 的请求转发到同一实例
@@ -36,7 +39,7 @@ export async function joinRoom(
     if (!initPromise) { // 如果房间正在初始化，则等待初始化完成，避免重复初始化
       initPromise = (async () => {
         try {
-          console.log(`[Room] Creating room for ${resourceId}`);
+          logger.log(`Creating room for ${resourceId}`);
           // 从 Note 微服务加载最新快照并初始化 YDoc
           const { yDoc, stateVector, version } = await loadDocFromNoteService(resourceId);
           const newRoom: Room = {
@@ -184,7 +187,7 @@ export async function joinRoom(
   }
 
   if (ws.readyState !== WebSocket.OPEN) {
-    console.log(`[Room] Ghost connection from ${userId} aborted before injecting into room.`);
+    logger.log(`Ghost connection from ${userId} aborted before injecting into room.`);
     return room;
   }
 
@@ -205,7 +208,7 @@ export async function joinRoom(
     ws.send(encoding.toUint8Array(encoder));
   }
 
-  console.log(`[Room] User ${userId} joined room ${resourceId} (${room.connections.size} users)`);
+  logger.log(`User ${userId} joined room ${resourceId} (${room.connections.size} users)`);
   return room;
 }
 
@@ -226,13 +229,13 @@ export async function leaveRoom(resourceId: string, ws: WebSocket): Promise<void
   }
   room.connections.delete(ws);
 
-  console.log(`[Room] User ${conn?.userId} left room ${resourceId} (${room.connections.size} remaining)`);
+  logger.log(`User ${conn?.userId} left room ${resourceId} (${room.connections.size} remaining)`);
 
   // 优雅延时销毁
   // 用户可能经常会刷新页面，或遇到短暂的网络抖动，销毁房间需要一定的延时，避免频繁创建和销毁房间
   if (room.connections.size === 0) {
     room.idleTimer = setTimeout(async () => {
-      console.log(`[Room] Destroying idle room ${resourceId}`);
+      logger.log(`Destroying idle room ${resourceId}`);
 
       await flushRoom(room);
 

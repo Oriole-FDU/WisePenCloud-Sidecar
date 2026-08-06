@@ -1,12 +1,15 @@
+import { Logger } from '@nestjs/common';
 import { WebSocket } from 'ws';
 import { handleYjsBinaryMessage, getRoom } from '../../../application/services/yjs';
 import { ClientIntent } from '../../../application/services/yjs/types';
 import { WebSocketConnectionContext } from './types';
 
+const logger = new Logger('WebSocket');
+
 export function routeWebSocketMessage(
   ws: WebSocket,
   context: WebSocketConnectionContext,
-  rawData: Buffer,
+  rawData: Buffer | string,
   isBinary: boolean,
 ): void {
   try {
@@ -44,7 +47,7 @@ export function routeWebSocketMessage(
 
     const response = handleYjsBinaryMessage(
       room,
-      rawData,
+      Buffer.isBuffer(rawData) ? rawData : Buffer.from(rawData),
       currentIntent,
       context.isWritable,
       ws,
@@ -53,6 +56,6 @@ export function routeWebSocketMessage(
       ws.send(response);
     }
   } catch (err) {
-    console.error(`[WS] Error processing message in room ${context.resourceId}`, err);
+    logger.error(`Error processing message in room ${context.resourceId}`, err instanceof Error ? err.stack : String(err));
   }
 }

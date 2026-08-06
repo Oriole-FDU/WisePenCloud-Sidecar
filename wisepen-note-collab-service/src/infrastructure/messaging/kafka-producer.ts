@@ -1,6 +1,9 @@
+import { Logger } from '@nestjs/common';
 import { Kafka, Producer } from 'kafkajs';
 import { config, KAFKA_TOPIC_SNAPSHOT, KAFKA_TOPIC_OPLOG } from '../../config';
 import { OplogEntry } from '../../application/services/yjs/yjs-operation-logger';
+
+const logger = new Logger('Kafka');
 
 export interface NoteSnapshotMessage {
   resourceId: string;
@@ -25,7 +28,7 @@ export async function initKafkaProducer(): Promise<void> {
   });
   producer = kafka.producer();
   await producer.connect();
-  console.log('[Kafka] Producer connected');
+  logger.log('Producer connected');
 }
 
 export async function sendSnapshot(msg: NoteSnapshotMessage): Promise<void> {

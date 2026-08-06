@@ -1,24 +1,26 @@
+import { Logger } from '@nestjs/common';
 import { config } from '../../config';
 import * as os from 'os';
 import { NacosNamingClient } from 'nacos';
-import { processDeveloper } from '../../developer-config';
 import { getCurrentDeveloper } from '../../shared/gray/gray-context-holder';
 import { DEVELOPER_METADATA_KEY, selectDeveloperInstances } from './developer-isolation';
 
 export let nacosNamingClient: any;
 
+const logger = new Logger('Nacos');
+
 const nacosSilentLogger = {
   ...console,
   info: (...args: any[]) => {},
   debug: (...args: any[]) => {},
-  warn: (...args: any[]) => console.warn(...args),
+  warn: (...args: any[]) => logger.warn(args.map(String).join(' ')),
   error: (msg: any, err?: any) => {
     const errorString = String(msg || '') + String(err || '');
     // 拦截极其烦人的 EADDRINUSE 和心跳发送失败报错
     if (errorString.includes('EADDRINUSE') || errorString.includes('CLIENT-BEAT') || errorString.includes('HostReactor')) {
       return; // 假装没看见，丢进黑洞
     }
-    console.error('[Nacos Error]', msg, err);
+    logger.error(String(msg), err instanceof Error ? err.stack : String(err ?? ''));
   }
 } as Console;
 
@@ -70,6 +72,7 @@ export async function registerWithNacos(): Promise<void> {
     }
 
     const registerIp = resolveRegisterIp();
+    const developerName = config.developer.name;
     await nacosNamingClient.registerInstance(config.serviceName, {
       ip: registerIp,
       port: config.port,
@@ -80,16 +83,16 @@ export async function registerWithNacos(): Promise<void> {
       metadata: {
         'preserved.register.source': 'NODEJS',
         'version': '1.0.0',
-        ...(processDeveloper ? { [DEVELOPER_METADATA_KEY]: processDeveloper } : {}),
+        ...(developerName ? { [DEVELOPER_METADATA_KEY]: developerName } : {}),
       }
     });
 
-    console.log(
-      `[Nacos] Registered at ${registerIp}:${config.port}` +
-        (processDeveloper ? ` developer=${processDeveloper}` : ''),
+    logger.log(
+      `Registered at ${registerIp}:${config.port}` +
+        (developerName ? ` developer=${developerName}` : ''),
     );
   } catch (err) {
-    console.error('[Nacos] Registration failed, retrying...', err);
+    logger.error('Registration failed, retrying...', err instanceof Error ? err.stack : String(err));
     setTimeout(registerWithNacos, 5000);
   }
 }
@@ -104,9 +107,9 @@ export async function deregisterFromNacos(): Promise<void> {
         groupName: config.nacos.group
       });
       await nacosNamingClient.close();
-      console.log('[Nacos] Deregistered successfully.');
+      logger.log('Deregistered successfully.');
     } catch (err) {
-      console.error('[Nacos] Deregistration failed', err);
+      logger.error('Deregistration failed', err instanceof Error ? err.stack : String(err));
     }
   }
 }

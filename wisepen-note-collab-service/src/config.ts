@@ -42,6 +42,9 @@ export const config: any = {
   security: {
     fromSourceSecret: 'APISIX-wX0iR6tY',
   },
+  developer: {
+    name: process.env.DEVELOPER_ENABLE === 'true' ? process.env.DEVELOPER_NAME?.trim() || undefined : undefined,
+  },
 };
 
 function applyRemoteConfig(remoteConfig: any): void {

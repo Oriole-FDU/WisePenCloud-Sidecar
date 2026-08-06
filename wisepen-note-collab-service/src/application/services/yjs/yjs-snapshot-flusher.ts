@@ -1,9 +1,12 @@
+import { Logger } from '@nestjs/common';
 import * as Y from 'yjs';
 import { NoteSnapshotMessage, sendOperationLogs, sendSnapshot } from '../../../infrastructure/messaging/kafka-producer';
 import { Room } from './types';
 import { encodeFullSnapshot, encodeDelta, getStateVector } from './yjs-ydoc-manager';
 import { drainOplog, clearOplog } from './yjs-operation-logger';
 import { config } from '../../../config';
+
+const logger = new Logger('SnapshotScheduler');
 
 // 使用对象存储定时器引用和活动状态，便于安全地清除
 const schedulerState = new Map<string, { active: boolean, timer?: NodeJS.Timeout }>();
@@ -15,7 +18,7 @@ export function startSnapshotScheduler(
   if (schedulerState.has(room.resourceId)) return;
 
   schedulerState.set(room.resourceId, { active: true });
-  console.log(`[Scheduler] Started for room ${room.resourceId}`);
+  logger.log(`Started for room ${room.resourceId}`);
 
   // 启动递归调度
   scheduleNextFlush(room);
@@ -28,7 +31,7 @@ export function stopSnapshotScheduler(room: Room): void {
     state.active = false;
     if (state.timer) clearTimeout(state.timer);
     schedulerState.delete(room.resourceId);
-    console.log(`[Scheduler] Stopped for room ${room.resourceId}`);
+    logger.log(`Stopped for room ${room.resourceId}`);
   }
 }
 
@@ -46,7 +49,7 @@ async function scheduleNextFlush(
         await flushRoom(room);
       }
     } catch (err) {
-      console.error(`[Scheduler] Flush failed for room ${room.resourceId}`, err);
+      logger.error(`Flush failed for room ${room.resourceId}`, err instanceof Error ? err.stack : String(err));
     } finally {
       // 无论成功还是失败（例如网络抖动），都要在结束后再排队下一次
       scheduleNextFlush(room);
@@ -101,7 +104,7 @@ export async function flushRoom(
 
     // 更新状态
     room.prevStateVector = stateVector;
-    console.log(`[Scheduler] Flushed DELTA for room ${room.resourceId} v${version}`);
+    logger.log(`Flushed DELTA for room ${room.resourceId} v${version}`);
   } else {
     // 首次创建，初始化一个基准状态向量
     room.prevStateVector = getStateVector(room.yDoc);
@@ -131,7 +134,7 @@ export async function flushRoom(
 
     // 发送全量快照消息
     await sendSnapshot(fullMsg);
-    console.log(`[Scheduler] Flushed FULL Checkpoint for room ${room.resourceId} v${version}`);
+    logger.log(`Flushed FULL Checkpoint for room ${room.resourceId} v${version}`);
   }
 
   // 清空本轮时间窗口的活跃用户集合

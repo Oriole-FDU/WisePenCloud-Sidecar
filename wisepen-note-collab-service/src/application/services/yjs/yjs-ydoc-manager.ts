@@ -1,5 +1,8 @@
+import { Logger } from '@nestjs/common';
 import * as Y from 'yjs';
 import { getLatestSnapshot } from '../../../infrastructure/external-client/note-service-client';
+
+const logger = new Logger('YDoc');
 
 // 从 Note 微服务加载最新快照并初始化 YDoc
 export async function loadDocFromNoteService(
@@ -15,7 +18,7 @@ export async function loadDocFromNoteService(
   // deltas: 在该 FULL 之后产生的所有 DELTA 增量数组 (一般为空，除非出现异常退出)
   const { fullSnapshot, deltas, version } = await getLatestSnapshot(resourceId);
   
-  console.log(`[DocManager] Loaded snapshot for ${resourceId}: fullSnapshot=${fullSnapshot ? fullSnapshot.length : 0} bytes, deltas=${deltas ? deltas.length : 0} entries, version=${version}`);
+  logger.log(`Loaded snapshot for ${resourceId}: fullSnapshot=${fullSnapshot ? fullSnapshot.length : 0} bytes, deltas=${deltas ? deltas.length : 0} entries, version=${version}`);
 
   if (fullSnapshot && fullSnapshot.length > 0) {
     // 应用快照到 YDoc

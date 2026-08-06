@@ -81,7 +81,7 @@ export class AiNoteController {
   })
   async readXml(
     @Query('resourceId') resourceId: string | undefined,
-    @Body() request: NoteReadRequestDto,
+    @Body() request: NoteReadRequestDto | undefined,
   ): Promise<string> {
     checkSecurityPolicy({ login: true });
     const securityContext = getSecurityContext()!;

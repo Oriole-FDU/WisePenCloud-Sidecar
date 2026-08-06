@@ -16,12 +16,14 @@ function fromSourceHeader(): Record<string, string> {
 
 export async function createInternalServiceClient(serviceName: string): Promise<AxiosInstance> {
   const baseURL = await getServiceUrl(serviceName);
-  return axios.create({
+  const client = axios.create({
     baseURL,
     timeout: 10000,
     headers: fromSourceHeader(),
+    proxy: false,
     validateStatus: () => true,
   });
+  return client;
 }
 
 function toRemoteServiceResult(response: Partial<R<unknown>>): IResult {

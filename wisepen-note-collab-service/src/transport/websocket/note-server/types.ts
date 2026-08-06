@@ -1,7 +1,7 @@
 import { ClientIntent } from '../../../application/services/yjs/types';
 
 export interface QueuedWebSocketMessage {
-  rawData: Buffer;
+  rawData: Buffer | string;
   isBinary: boolean;
 }
 

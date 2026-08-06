@@ -16,12 +16,12 @@ export async function createNestServer(): Promise<{ app: INestApplication; serve
   app.use(json({ limit: '2mb' }));
   app.useGlobalFilters(new HttpExceptionFilter());
   setupSwagger(app);
-  await app.init();
 
   const server = app.getHttpServer() as http.Server;
   const expressApp = app.getHttpAdapter().getInstance() as expressWs.Application;
   expressWs(expressApp, server);
   registerWebSocketRoutes(expressApp);
+  await app.init();
 
   return { app, server };
 }

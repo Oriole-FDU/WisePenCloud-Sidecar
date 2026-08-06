@@ -28,6 +28,7 @@ export class HttpModule implements NestModule {
         { path: 'docs', method: RequestMethod.ALL },
         { path: 'docs/{*path}', method: RequestMethod.ALL },
         { path: 'openapi.json', method: RequestMethod.ALL },
+        { path: 'note-collab/ws', method: RequestMethod.ALL },
       )
       .forRoutes({ path: '*', method: RequestMethod.ALL });
   }
