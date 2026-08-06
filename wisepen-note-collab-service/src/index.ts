@@ -1,14 +1,18 @@
-import http from 'http';
-import { WebSocketServer } from 'ws';
+import { Logger } from '@nestjs/common';
 import { config, loadNacosConfig } from './config';
-import { setupWebSocketServer } from './ws/connection-handler';
-import { initKafkaProducer, disconnectKafka } from './clients/kafka-producer';
-import { registerWithNacos, deregisterFromNacos } from './nacos/registry';
+import {
+  initKafkaProducer,
+  disconnectKafka,
+} from './infrastructure/messaging/kafka-producer';
+import { registerWithNacos, deregisterFromNacos } from './infrastructure/discovery/nacos-registry';
+import { createNestServer } from './transport/http/nest-app';
+
+const logger = new Logger('Boot');
 
 async function main(): Promise<void> {
   // 从 Nacos 拉取远程配置
   await loadNacosConfig();
-  console.log(`[Boot] Starting ${config.serviceName} on port ${config.port}`);
+  logger.log(`Starting ${config.serviceName} on port ${config.port}`);
 
   // 注册到 Nacos
   await registerWithNacos();
@@ -16,25 +20,17 @@ async function main(): Promise<void> {
   // 初始化 Kafka producer
   await initKafkaProducer();
 
-  // 启动HTTP server
-  const server = http.createServer((_req, res) => {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', service: config.serviceName }));
-  });
-
-  // 在 /note-collab/ws 路径上挂 WebSocket server
-  const wss = new WebSocketServer({ server, path: '/note-collab/ws' });
-  setupWebSocketServer(wss);
+  const { app, server } = await createNestServer();
 
   server.listen(config.port, () => {
-    console.log(`[Boot] HTTP + WebSocket server listening on :${config.port}`);
+    logger.log(`HTTP + WebSocket server listening on :${config.port}`);
   });
 
   const shutdown = async () => {
-    console.log('[Shutdown] Gracefully shutting down...');
+    logger.log('Gracefully shutting down...');
     await deregisterFromNacos();
     await disconnectKafka();
-    wss.close();
+    await app.close();
     server.close();
     process.exit(0);
   };
@@ -45,6 +41,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error('[Boot] Fatal error:', err);
+  logger.error('Fatal error', err instanceof Error ? err.stack : String(err));
   process.exit(1);
 });
