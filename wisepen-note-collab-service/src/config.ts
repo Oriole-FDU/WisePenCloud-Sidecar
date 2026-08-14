@@ -31,7 +31,7 @@ export const config: any = {
     brokers: [] as string[],
   },
   collab: {
-    checkpointInterval: 10,
+    maxDeltaVersionsBeforeFull: 9,
     snapshotFlushIntervalMs: 5000,
     roomIdleDestroyDelayMs: 30000,
   },
@@ -54,8 +54,8 @@ function applyRemoteConfig(remoteConfig: any): void {
     config.kafka.brokers = String(remoteConfig.kafka.brokers).split(',');
   }
   if (remoteConfig.collab) {
-    config.collab.checkpointInterval =
-      remoteConfig.collab['checkpoint-interval'] ?? config.collab.checkpointInterval;
+    config.collab.maxDeltaVersionsBeforeFull =
+      remoteConfig.collab['max-delta-versions-before-full'] ?? config.collab.maxDeltaVersionsBeforeFull;
     config.collab.snapshotFlushIntervalMs =
       remoteConfig.collab['snapshot-flush-interval-ms'] ?? config.collab.snapshotFlushIntervalMs;
     config.collab.roomIdleDestroyDelayMs =

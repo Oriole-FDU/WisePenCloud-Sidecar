@@ -237,7 +237,7 @@ export async function leaveRoom(resourceId: string, ws: WebSocket): Promise<void
     room.idleTimer = setTimeout(async () => {
       logger.log(`Destroying idle room ${resourceId}`);
 
-      await flushRoom(room);
+      await flushRoom(room, { forceFull: true });
 
       stopSnapshotScheduler(room);
 
