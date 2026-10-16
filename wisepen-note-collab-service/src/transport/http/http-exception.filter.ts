@@ -7,7 +7,6 @@ import {
 } from '@nestjs/common';
 import { Response } from 'express';
 import { ZodValidationException } from 'nestjs-zod';
-import { BlockIdMappingError } from '../../application/services/note-ai/block-id-mapping-store';
 import { CommonError, PermissionError, ServiceError } from '../../shared/errors';
 import { R } from '../../shared/types';
 import { HeaderInterceptError } from '../header-interceptor';
@@ -42,16 +41,6 @@ export class HttpExceptionFilter implements ExceptionFilter {
       res.status(status).json({
         code: error.errorResult.code,
         key: error.errorResult.key,
-        msg: error.message,
-        data: null,
-      } satisfies R<null>);
-      return;
-    }
-
-    if (error instanceof BlockIdMappingError) {
-      res.status(200).json({
-        code: CommonError.REQUEST_PARAM_INVALID.code,
-        key: CommonError.REQUEST_PARAM_INVALID.key,
         msg: error.message,
         data: null,
       } satisfies R<null>);

@@ -1,67 +1,27 @@
 import { Room } from '../../yjs/types';
-import {
-  BlockIdMappingError,
-  findMapping,
-  getReadableVersion,
-  addBlockIdMapping,
-  resolvePublicId,
-  type BlockIdMapping,
-} from '../block-id-mapping-store';
+import { getReadableVersion } from '../yjs-ids';
 import { Note } from '../note-types';
 import { NoteReadRequest } from '../request-types';
 import { readNoteBlocks } from './note-ydoc-reader';
-
-export interface ActiveRoomReadResult {
-  document: Note;
-  mapping: BlockIdMapping;
-}
 
 /**
  * 从当前活跃协同房间读取一份面向 AI 的笔记快照。
  *
  * 调用方必须保证 room 已经是当前 Sidecar实例中的活跃 Yjs 房间
  * 将 BlockNote 存在 Y.XmlFragment 中的树结构转换成 NoteBlock，再根据请求 scope 裁剪出整篇、子树、离散块或扁平区间
+ *
+ * 快照与 scope 里的块 ID 都是笔记内真实存在的块 ID，不需要额外映射或还原
  */
 export function readActiveRoom(
   room: Room,
   request: NoteReadRequest,
-): ActiveRoomReadResult {
+): Note {
   const version = getReadableVersion(room.yDoc);
   const blocks = readNoteBlocks(room.yDoc, request.includeAiContent !== false);
-  const wholeDocument: Note = {
+  return {
     resourceId: room.resourceId,
     version,
-    blocks,
-  };
-  const mapping = addBlockIdMapping(room.yDoc, wholeDocument);
-  let resolvedScope = request.scope ?? { kind: 'whole_note' as const };
-  if (request.scope && request.scope.kind !== 'whole_note') {
-    const requestMapping = findMapping(room.yDoc, request.version);
-    if (!requestMapping) throw new BlockIdMappingError();
-    if (request.scope.kind === 'blocks') {
-      resolvedScope = {
-        ...request.scope,
-        blockIds: request.scope.blockIds.map((id) => resolvePublicId(requestMapping, id)),
-      };
-    } else if (request.scope.kind === 'subtree') {
-      resolvedScope = {
-        ...request.scope,
-        blockId: resolvePublicId(requestMapping, request.scope.blockId),
-      };
-    } else {
-      resolvedScope = {
-        ...request.scope,
-        startBlockId: resolvePublicId(requestMapping, request.scope.startBlockId),
-        endBlockId: resolvePublicId(requestMapping, request.scope.endBlockId),
-      };
-    }
-  }
-  return {
-    document: {
-      ...wholeDocument,
-      blocks: applyScope(blocks, resolvedScope),
-    },
-    mapping,
+    blocks: applyScope(blocks, request.scope ?? { kind: 'whole_note' }),
   };
 }
 
