@@ -20,7 +20,6 @@ import { Room } from '../../../application/services/yjs/types';
 import { applyPatchToActiveRoom, readActiveRoom } from '../../../application/services/note-ai/service';
 import { NotePatchRequest, NoteReadRequest, NotePatchResponse } from '../../../application/services/note-ai/request-types';
 import { encodeNoteXml } from '../../../application/services/note-ai/read/note-xml-codec';
-import { getPublicBlockId } from '../../../application/services/note-ai/block-id-mapping-store';
 import { getSecurityContext } from '../../../shared/context/request-context-holder';
 import { CommonError, PermissionError, ServiceError } from '../../../shared/errors';
 import { checkSecurityPolicy } from '../../../shared/security/security-aspect';
@@ -58,9 +57,9 @@ export class AiNoteController {
     summary: '按范围以紧凑 XML 读取活跃笔记',
     description: `
 - 用途：读取当前 Sidecar 实例中的活跃协同房间，并以紧凑 XML 暴露给内部 AI 工具。
-- 请求：resourceId 指定目标笔记；body 可指定 scope、includeAiContent 和 version。
+- 请求：resourceId 指定目标笔记；body 可指定 scope 和 includeAiContent。
 - 约束：当前用户必须已登录，且拥有目标资源 VIEW 权限；目标协同房间必须处于活跃状态。
-- 处理：读取活跃 Y.Doc 快照，建立公开块 ID 映射，并在 scope 存在时解析短块 ID。
+- 处理：读取活跃 Y.Doc 快照，并按 scope 裁剪；块 ID 均为笔记中真实的块 ID。
 - 失败：未登录 -> PermissionError.NOT_LOGIN；权限不足 -> PermissionError.PERMISSION_DENIED；房间未激活 -> CommonError.REQUEST_ERROR。
 - 响应：成功时返回 application/xml。
     `,
@@ -71,11 +70,11 @@ export class AiNoteController {
   @ApiQuery({ name: 'resourceId', required: true, description: '笔记资源 ID。' })
   @ApiBody({ type: NoteReadRequestDto, required: false })
   @ApiOkResponse({
-    description: '读取成功；块 ID 为按文档顺序生成的短 ID',
+    description: '读取成功；块 ID 为笔记中真实的块 ID',
     content: {
       'application/xml': {
         schema: { type: 'string' },
-        example: '<document resourceId="note-1" version="yjs-v1:example"><paragraph id="p_001">第一句。</paragraph></document>',
+        example: '<document resourceId="note-1" version="yjs-v1:example"><paragraph id="kV9mQ2x9Kd0pTr4LwZ1s">第一句。</paragraph></document>',
       },
     },
   })
@@ -100,8 +99,7 @@ export class AiNoteController {
     }
     const readRequest = (request ?? {}) as NoteReadRequest;
     const room = requireActiveRoom(normalizedResourceId);
-    const { document, mapping } = readActiveRoom(room, readRequest);
-    return encodeNoteXml(document, (id) => getPublicBlockId(mapping, id));
+    return encodeNoteXml(readActiveRoom(room, readRequest));
   }
 
   @ApiOperation({
@@ -110,8 +108,8 @@ export class AiNoteController {
 - 用途：将内部 AI 工具生成的结构化 Diff 应用到当前 Sidecar 实例中的活跃协同房间。
 - 请求：resourceId 指定目标笔记；body 描述 patchId、version 和 operations。
 - 约束：当前用户必须已登录，且拥有目标资源 EDIT 权限；目标协同房间必须处于活跃状态；操作数量必须在 1 到 200 之间。
-- 处理：解析公开块 ID，应用 patch，写入 Y.Doc，并返回逐操作处理结果。
-- 失败：未登录 -> PermissionError.NOT_LOGIN；权限不足 -> PermissionError.PERMISSION_DENIED；块 ID 映射不存在 -> CommonError.REQUEST_PARAM_INVALID。
+- 处理：按笔记中真实的块 ID 应用 patch，写入 Y.Doc，并返回逐操作处理结果。
+- 失败：未登录 -> PermissionError.NOT_LOGIN；权限不足 -> PermissionError.PERMISSION_DENIED。
 - 响应：成功时返回处理结果。
     `,
   })

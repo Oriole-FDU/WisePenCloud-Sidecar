@@ -28,7 +28,7 @@ const INLINE_BLOCK_TYPES = new Set([
  * subtree 表示读取某个块以及它的全部子块
  * block_range 表示按文档阅读顺序读取两个块之间的闭区间
  * 
- * 除 whole_note 外，其余范围使用的都是短块 ID （需事先进行一次整篇读取）
+ * 除 whole_note 外，其余范围使用的都是笔记中真实的块 ID （可从一次读取结果中获得）
  */
 export const NoteReadScopeSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('whole_note') }).passthrough(),
@@ -52,12 +52,10 @@ export const NoteReadScopeSchema = z.discriminatedUnion('kind', [
  * 
  * scope 不传时默认读取整篇笔记
  * includeAiContent 是否读取并返回 AI 建议层（AI 生成但尚未真正合入正文的内容）
- * version 短块 ID 的文档版本
  */
 export const NoteReadRequestSchema = z.object({
   scope: NoteReadScopeSchema.optional(),
   includeAiContent: z.boolean().optional(),
-  version: nonEmptyString('version').refine((value) => value.startsWith('yjs-v1:'), `version 格式无效`).optional()
 }).passthrough();
 
 /**

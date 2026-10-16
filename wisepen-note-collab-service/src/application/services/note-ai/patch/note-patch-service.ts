@@ -12,15 +12,7 @@ import {
   PatchOperation,
 } from '../request-types';
 import { jsonEqual } from '../utils';
-import {
-  BlockIdMappingError,
-  createDeterministicBlockId,
-  findMapping,
-  getReadableVersion,
-  addBlockIdMapping,
-  resolvePublicId,
-} from '../block-id-mapping-store';
-import { readNoteBlocks } from '../read/note-ydoc-reader';
+import { createDeterministicBlockId, getReadableVersion } from '../yjs-ids';
 
 /**
  * 构造单条 AI patch 操作的冲突结果
@@ -147,28 +139,6 @@ export function applyPatchToActiveRoom(
   request: NotePatchRequest,
   userId: string,
 ): NotePatchResponse {
-  // 建立当前文档的短 ID 映射
-  addBlockIdMapping(room.yDoc, {
-    resourceId: room.resourceId,
-    version: getReadableVersion(room.yDoc),
-    blocks: readNoteBlocks(room.yDoc, false),
-  });
-  // 用请求里的 version 找回当时的映射
-  const requestMapping = findMapping(room.yDoc, request.version);
-  if (!requestMapping) throw new BlockIdMappingError();
-  // 把请求里的短 ID 改成 Yjs 内部 ID
-  const resolvedRequest: NotePatchRequest = {
-    ...request,
-    operations: request.operations.map((operation) => {
-      if (operation.kind === 'insertBlock') {
-        return {
-          ...operation,
-          anchorBlockId: resolvePublicId(requestMapping, operation.anchorBlockId),
-        };
-      }
-      return { ...operation, blockId: resolvePublicId(requestMapping, operation.blockId) };
-    }),
-  };
   const currentVersion = getReadableVersion(room.yDoc);
   const results: NotePatchOperationResult[] = [];
   const lastAfterBlockByAnchor = new Map<string, string>();
@@ -176,10 +146,10 @@ export function applyPatchToActiveRoom(
   // 在一个 Yjs transaction 里执行所有操作
   // transaction origin 标记为 AI_DIFF，供 yjs-room-manager 的操作追踪和广播逻辑识别来源
   room.yDoc.transact(() => {
-    for (const operation of resolvedRequest.operations) {
+    for (const operation of request.operations) {
       if (operation.kind === 'insertBlock') {
         // 插入块
-        results.push(applyInsert(room, resolvedRequest, operation, lastAfterBlockByAnchor));
+        results.push(applyInsert(room, request, operation, lastAfterBlockByAnchor));
       } else {
         // 取代或删除块
         results.push(applyReplaceOrDelete(room, operation));
@@ -187,31 +157,12 @@ export function applyPatchToActiveRoom(
     }
   }, { operationType: 'AI_DIFF', source: 'ai-note-internal', userId });
 
-  const response: NotePatchResponse = {
+  return {
     resourceId: room.resourceId,
-    requestedVersion: resolvedRequest.version,
+    requestedVersion: request.version,
     currentVersion,
     resultVersion: getReadableVersion(room.yDoc),
-    modified: resolvedRequest.version !== currentVersion,
+    modified: request.version !== currentVersion,
     results,
-  };
-  // 把结果里的内部 ID 转回短 ID
-  const responseMapping = addBlockIdMapping(room.yDoc, {
-    resourceId: room.resourceId,
-    version: response.resultVersion,
-    blocks: readNoteBlocks(room.yDoc, false),
-  });
-  return {
-    ...response,
-    // 调用方只认识 readXml 返回的短 ID；如果结果块不在映射里，不泄露内部 ID。
-    results: response.results.map((result) => {
-      if (!result.blockId) return result;
-      const publicId = responseMapping.internalBlockIDToPublicBlockID.get(result.blockId);
-      if (!publicId) {
-        const { blockId: _blockId, ...withoutBlockId } = result;
-        return withoutBlockId;
-      }
-      return { ...result, blockId: publicId };
-    }),
   };
 }

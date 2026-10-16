@@ -2,7 +2,6 @@ import { Note, NoteBlock, NoteInline, NoteTableContent } from '../note-types';
 import { isRecord } from '../utils';
 
 const XML_ELEMENT_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_.-]*$/;
-const PUBLIC_BLOCK_ID_PATTERN = /^p_\d{3,}$/;
 const INLINE_BLOCK_TYPES = new Set([
   'paragraph',
   'heading',
@@ -106,18 +105,13 @@ function contentText(type: string, content: unknown): string {
  * 编码单个 NoteBlock 为 XML 元素
  *
  * 块类型会作为元素名；如果类型不是合法 XML 名，则退化为 <block type="...">
- * 块 ID 必须是 publicBlockId 生成的短 ID，children 会递归编码，aiContent 会包进 <ai> 子元素
+ * 块 ID 使用笔记内真实的块 ID，children 会递归编码，aiContent 会包进 <ai> 子元素
  */
-function encodeBlock(
-  block: NoteBlock,
-  publicBlockId: (internalId: string) => string,
-): string {
-  const id = publicBlockId(block.id);
-  if (!PUBLIC_BLOCK_ID_PATTERN.test(id)) throw new Error('INVALID_PUBLIC_BLOCK_ID');
+function encodeBlock(block: NoteBlock): string {
   const validType = XML_ELEMENT_NAME_PATTERN.test(block.type);
   const elementName = validType ? block.type : 'block';
   const attributes = [
-    `id="${escapeXml(id)}"`,
+    `id="${escapeXml(block.id)}"`,
     ...(validType ? [] : [`type="${escapeXml(block.type)}"`]),
     ...(block.type === 'codeBlock' && typeof block.props.language === 'string'
       ? [`lang="${escapeXml(block.props.language)}"`]
@@ -127,7 +121,7 @@ function encodeBlock(
   const aiContent = block.aiContent === undefined
     ? ''
     : `<ai>${escapeXml(contentText(block.type, block.aiContent))}</ai>`;
-  const children = block.children.map((child) => encodeBlock(child, publicBlockId)).join('');
+  const children = block.children.map((child) => encodeBlock(child)).join('');
   const body = content + aiContent + children;
   return body
     ? `<${elementName} ${attributes}>${body}</${elementName}>`
@@ -137,14 +131,11 @@ function encodeBlock(
 /**
  * 将一份 AI Note 快照编码成紧凑 XML 文档
  */
-export function encodeNoteXml(
-  snapshot: Note,
-  publicBlockId: (internalId: string) => string,
-): string {
+export function encodeNoteXml(snapshot: Note): string {
   const attributes = [
     `resourceId="${escapeXml(snapshot.resourceId)}"`,
     `version="${escapeXml(snapshot.version)}"`,
   ].join(' ');
-  const blocks = snapshot.blocks.map((block) => encodeBlock(block, publicBlockId)).join('');
+  const blocks = snapshot.blocks.map((block) => encodeBlock(block)).join('');
   return `<document ${attributes}>${blocks}</document>`;
 }
