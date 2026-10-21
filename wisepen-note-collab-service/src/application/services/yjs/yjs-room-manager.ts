@@ -26,11 +26,7 @@ export function getAllRooms(): Map<string, Room> {
   return rooms;
 }
 
-export async function joinRoom(
-  resourceId: string,
-  ws: WebSocket,
-  userId: string,
-): Promise<Room> {
+async function getOrCreateRoom(resourceId: string): Promise<Room> {
   let room = rooms.get(resourceId);
 
   // 如果房间不存在，则创建房间
@@ -47,6 +43,9 @@ export async function joinRoom(
             yDoc,
             awareness: new awarenessProtocol.Awareness(yDoc),
             connections: new Map(),
+            activeLeases: 0,
+            // 标记用户通过编辑器打开将使得 forceFullOnDestroy 变为 true
+            forceFullOnDestroy: false,
             prevStateVector: stateVector,
             snapshotVersion: version,
             dirty: false,
@@ -186,14 +185,90 @@ export async function joinRoom(
     room.idleTimer = null;
   }
 
+  return room;
+}
+
+async function destroyRoomIfIdle(room: Room): Promise<void> {
+  if (rooms.get(room.resourceId) !== room || room.connections.size > 0 || room.activeLeases > 0) {
+    return;
+  }
+
+  logger.log(`Destroying idle room ${room.resourceId}`);
+
+  // 若房间曾接入编辑器，则在关闭时提交 FULL 版本 
+  // AI 进行读取与编辑均无需在最后关闭时提交 FULL 版本 
+  await flushRoom(room, { forceFull: room.forceFullOnDestroy });
+
+  // flush 期间可能有 WebSocket 或内部请求重新使用该房间，销毁前应再次确认
+  if (rooms.get(room.resourceId) !== room || room.connections.size > 0 || room.activeLeases > 0) {
+    return;
+  }
+
+  rooms.delete(room.resourceId);
+  stopSnapshotScheduler(room);
+  if (room.flushBroadcastsTimer) {
+    clearTimeout(room.flushBroadcastsTimer);
+    room.flushBroadcastsTimer = null;
+  }
+
+  // 销毁 Awareness 和 YDoc
+  room.awareness.destroy();
+  room.yDoc.destroy();
+  // 清空操作日志
+  clearOplog(room.resourceId);
+}
+
+
+function scheduleIdleDestroy(room: Room): void {
+  if (room.connections.size > 0 || room.activeLeases > 0 || room.idleTimer) return;
+
+  // 用户可能经常会刷新页面，或遇到短暂的网络抖动，销毁房间需要一定的延时，避免频繁创建和销毁房间
+  room.idleTimer = setTimeout(() => {
+    room.idleTimer = null;
+    destroyRoomIfIdle(room).catch((err: unknown) => {
+      logger.error(
+        `Failed to destroy idle room ${room.resourceId}`,
+        err instanceof Error ? err.stack : String(err),
+      );
+      scheduleIdleDestroy(room);
+    });
+  }, config.collab.roomIdleDestroyDelayMs);
+}
+
+/** 获取一个可由 WebSocket 或内部 HTTP 请求共用的房间，并持有短期引用 */
+export async function acquireRoom(resourceId: string): Promise<Room> {
+  const room = await getOrCreateRoom(resourceId);
+  room.activeLeases += 1;
+  return room;
+}
+
+/** 释放内部请求引用；没有连接和其他引用时进入统一的空闲回收流程 */
+export function releaseRoom(room: Room): void {
+  if (room.activeLeases <= 0) {
+    logger.warn(`Ignoring unmatched room lease release for ${room.resourceId}`);
+    return;
+  }
+  room.activeLeases -= 1;
+  scheduleIdleDestroy(room);
+}
+
+export async function joinRoom(
+  resourceId: string,
+  ws: WebSocket,
+  userId: string,
+): Promise<Room> {
+  const room = await getOrCreateRoom(resourceId);
+
   if (ws.readyState !== WebSocket.OPEN) {
     logger.log(`Ghost connection from ${userId} aborted before injecting into room.`);
+    scheduleIdleDestroy(room);
     return room;
   }
 
   // 添加用户连接
   const conn: UserConnection = { ws, userId, resourceId, clientIds: new Set<number>() };
   room.connections.set(ws, conn);
+  room.forceFullOnDestroy = true;
 
   // 主动为新连入的用户下发当前房间里已有的全量光标状态
   const currentClientIds = Array.from(room.awareness.getStates().keys());
@@ -231,24 +306,6 @@ export async function leaveRoom(resourceId: string, ws: WebSocket): Promise<void
 
   logger.log(`User ${conn?.userId} left room ${resourceId} (${room.connections.size} remaining)`);
 
-  // 优雅延时销毁
-  // 用户可能经常会刷新页面，或遇到短暂的网络抖动，销毁房间需要一定的延时，避免频繁创建和销毁房间
-  if (room.connections.size === 0) {
-    room.idleTimer = setTimeout(async () => {
-      logger.log(`Destroying idle room ${resourceId}`);
-
-      await flushRoom(room, { forceFull: true });
-
-      stopSnapshotScheduler(room);
-
-      // 销毁 Awareness 和 YDoc
-      room.awareness.destroy();
-      room.yDoc.destroy();
-      // 清空操作日志
-      clearOplog(resourceId);
-
-      rooms.delete(resourceId);
-
-    }, config.collab.roomIdleDestroyDelayMs);
-  }
+  // WebSocket 和内部 AI 请求共用同一空闲回收规则
+  scheduleIdleDestroy(room);
 }

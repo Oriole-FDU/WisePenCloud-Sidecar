@@ -1,5 +1,10 @@
 import { Room } from '../../yjs/types';
-import { findBlockLocation, getAiContentStore, insertEmptyBlock } from './note-ydoc-writer';
+import {
+  appendEmptyRootBlock,
+  findBlockLocation,
+  getAiContentStore,
+  insertEmptyBlock,
+} from './note-ydoc-writer';
 import {
   decodePatchContent,
   emptyNoteBlockContent,
@@ -64,12 +69,12 @@ function applyReplaceOrDelete(
 }
 
 /**
- * 应用 insertBlock 操作
+ * 应用锚点插入或根级追加操作
  */
 function applyInsert(
   room: Room,
   request: NotePatchRequest,
-  operation: Extract<PatchOperation, { kind: 'insertBlock' }>,
+  operation: Extract<PatchOperation, { kind: 'insertBlock' | 'appendRootBlock' }>,
   lastAfterBlockByAnchor: Map<string, string>,
 ): NotePatchOperationResult {
   // 生成确定性块 ID（AI块专用，根据 resourceId + patchId + opId 生成）
@@ -90,7 +95,7 @@ function applyInsert(
   if (existing) { // 若块已经存在
     // 如果已有块的类型和 AI 内容都和本次请求一致，说明是重复提交，返回 unchanged
     if (existing.block.nodeName === operation.block.type && jsonEqual(store.get(blockId), content)) {
-      if (operation.position === 'after') {
+      if (operation.kind === 'insertBlock' && operation.position === 'after') {
         // 记录为“原始锚点后最近插入的块”
         lastAfterBlockByAnchor.set(operation.anchorBlockId, blockId);
       }
@@ -100,39 +105,49 @@ function applyInsert(
     return conflict(operation, 'invalid_content', blockId);
   }
 
-  // before 直接使用原始锚点即可：连续 before 同一个块时，锚点会被前面的插入自然推后，顺序仍然正确。
-  // after 不能一直使用原始锚点：数组按 index 插入时，连续 after 同一个块会反复插到 anchor.index + 1，导致顺序反转
-  // 因此 after 需要改用“这个原始锚点后最近插入的块”作为实际锚点
-  const effectiveAnchorId =
-    operation.position === 'after'
-      ? (lastAfterBlockByAnchor.get(operation.anchorBlockId) ?? operation.anchorBlockId)
-      : operation.anchorBlockId;
+  if (operation.kind === 'appendRootBlock') {
+    appendEmptyRootBlock(
+      room.yDoc,
+      blockId,
+      operation.block.type,
+      operation.block.attrs ?? {},
+    );
+  } else {
+    // before 直接使用原始锚点即可：连续 before 同一个块时，锚点会被前面的插入自然推后，顺序仍然正确。
+    // after 不能一直使用原始锚点：数组按 index 插入时，连续 after 同一个块会反复插到 anchor.index + 1，导致顺序反转
+    // 因此 after 需要改用“这个原始锚点后最近插入的块”作为实际锚点
+    const effectiveAnchorId =
+      operation.position === 'after'
+        ? (lastAfterBlockByAnchor.get(operation.anchorBlockId) ?? operation.anchorBlockId)
+        : operation.anchorBlockId;
 
-  // 找到最终锚点块；找不到说明 AI 基于的块位置已经不可用，返回 anchor_missing 冲突
-  const anchor = findBlockLocation(room.yDoc, effectiveAnchorId);
-  if (!anchor) return conflict(operation, 'anchor_missing', blockId);
+    // 找到最终锚点块；找不到说明 AI 基于的块位置已经不可用，返回 anchor_missing 冲突
+    const anchor = findBlockLocation(room.yDoc, effectiveAnchorId);
+    if (!anchor) return conflict(operation, 'anchor_missing', blockId);
 
-  // 在最终锚点前后插入一个空 BlockNote 块占位（AI 建议内容不直接进入正文，由前端关联）
-  insertEmptyBlock(
-    room.yDoc,
-    anchor,
-    operation.position,
-    blockId,
-    operation.block.type,
-    operation.block.attrs ?? {},
-  );
+    // 在最终锚点前后插入一个空 BlockNote 块占位（AI 建议内容不直接进入正文，由前端关联）
+    insertEmptyBlock(
+      room.yDoc,
+      anchor,
+      operation.position,
+      blockId,
+      operation.block.type,
+      operation.block.attrs ?? {},
+    );
+    // 记录本轮 patch 中，“原始锚点”后最后插入的块。
+    // 后续继续 after 同一个原始锚点时，会接在这个块后面，避免顺序反转
+    if (operation.position === 'after') {
+      lastAfterBlockByAnchor.set(operation.anchorBlockId, blockId);
+    }
+  }
+
   // 把 AI 建议内容写入独立 store，让前端作为建议层展示或采纳
   store.set(blockId, content);
-  // 记录本轮 patch 中，“原始锚点”后最后插入的块。
-  // 后续继续 after 同一个原始锚点时，会接在这个块后面，避免顺序反转
-  if (operation.position === 'after') {
-    lastAfterBlockByAnchor.set(operation.anchorBlockId, blockId);
-  }
   return { opId: operation.opId, status: 'applied', blockId };
 }
 
 /**
- * 将 AI Diff 请求应用到活跃 Yjs 房间，并返回逐操作结果
+ * 将 AI Diff 请求应用到共享 Yjs 房间，并返回逐操作结果
  */
 export function applyPatchToActiveRoom(
   room: Room,
@@ -147,7 +162,7 @@ export function applyPatchToActiveRoom(
   // transaction origin 标记为 AI_DIFF，供 yjs-room-manager 的操作追踪和广播逻辑识别来源
   room.yDoc.transact(() => {
     for (const operation of request.operations) {
-      if (operation.kind === 'insertBlock') {
+      if (operation.kind === 'insertBlock' || operation.kind === 'appendRootBlock') {
         // 插入块
         results.push(applyInsert(room, request, operation, lastAfterBlockByAnchor));
       } else {

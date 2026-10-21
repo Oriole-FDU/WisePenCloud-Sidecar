@@ -31,11 +31,15 @@ export type PatchInlineItem = z.infer<typeof PatchInlineItemSchema>;
 /** AI patch 里某个块的正文内容 */
 export type PatchContent = z.infer<typeof PatchContentSchema>;
 
-/** AI patch 里的单条操作，可以替换已有块的 AI 内容、清空已有块的 AI 内容，或者在锚点块前后插入新块 */
+/** AI patch 里的单条操作，可以替换或清空已有块的 AI 内容，也可以相对锚点或在文档根末尾插入新块 */
 export type PatchOperation = z.infer<typeof PatchOperationSchema>;
 
 /** 单条 patch 操作的业务冲突原因 */
-export type NotePatchConflictReason = 'block_missing' | 'anchor_missing' | 'unsupported_type' | 'invalid_content';
+export type NotePatchConflictReason =
+  | 'block_missing'
+  | 'anchor_missing'
+  | 'unsupported_type'
+  | 'invalid_content';
 
 /** 单条 patch 操作的执行结果 */
 export interface NotePatchOperationResult {

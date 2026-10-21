@@ -267,6 +267,11 @@ export const PatchOperationSchema = z.discriminatedUnion('kind', [
     position: z.enum(['before', 'after']),
     block: InsertBlockCandidateSchema,
   }).passthrough(),
+  z.object({
+    opId: nonEmptyString('opId'),
+    kind: z.literal('appendRootBlock'),
+    block: InsertBlockCandidateSchema,
+  }).passthrough(),
 ]);
 
 export const NotePatchRequestSchema = z.object({

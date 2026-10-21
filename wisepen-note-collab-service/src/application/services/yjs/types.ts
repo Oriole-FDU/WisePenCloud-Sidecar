@@ -36,6 +36,10 @@ export interface Room {
 
   // 用户连接
   connections: Map<WebSocket, UserConnection>;
+  // 非 WebSocket 调用持有的短期引用，避免 AI 读写期间房间被空闲回收
+  activeLeases: number;
+  // 在销毁时是否需要强制发送 FULL 版本
+  forceFullOnDestroy: boolean;
   // 上一个状态向量
   prevStateVector: Uint8Array | null;
   // 已持久化快照版本

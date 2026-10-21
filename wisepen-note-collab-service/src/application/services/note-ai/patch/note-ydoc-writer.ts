@@ -146,6 +146,30 @@ function createEmptyTableElement(): Y.XmlElement {
 }
 
 /**
+ * 创建一个 AI 建议块使用的最小 BlockNote 结构占位
+ */
+function createEmptyBlock(
+  blockId: string,
+  type: string,
+  attributes: Record<string, unknown>,
+): { container: Y.XmlElement; block: Y.XmlElement } {
+  // 创建 blockContainer 并设置 blockId
+  const container = new Y.XmlElement('blockContainer');
+  container.setAttribute('id', blockId);
+
+  // 如果是表格，则创建一个最小可渲染的空表格节点
+  const block = type === 'table' ? createEmptyTableElement() : new Y.XmlElement(type);
+  // 为新插入的空块生成 BlockNote 所需默认属性
+  setAttributes(block, { ...defaultBlockAttributes(type), ...attributes });
+
+    // 非表格块至少需要一个 XmlText，BlockNote 前端才能把它当作可编辑文本块渲染
+  if (type !== 'table') block.insert(0, [new Y.XmlText()]);
+
+  container.insert(0, [block]);
+  return { container, block };
+}
+
+/**
  * 在指定锚点前后插入一个 AI 建议块的结构占位
  */
 export function insertEmptyBlock(
@@ -156,24 +180,30 @@ export function insertEmptyBlock(
   type: string,
   attributes: Record<string, unknown>,
 ): BlockLocation {
-  // 创建 blockContainer 并设置 blockId
-  const container = new Y.XmlElement('blockContainer');
-  container.setAttribute('id', blockId);
-
-  // 如果是表格，则创建一个最小可渲染的空表格节点
-  const block = type === 'table' ? createEmptyTableElement() : new Y.XmlElement(type);
-
-  // 为新插入的空块生成 BlockNote 所需默认属性
-  setAttributes(block, { ...defaultBlockAttributes(type), ...attributes });
-
-  // 非表格块至少需要一个 XmlText，BlockNote 前端才能把它当作可编辑文本块渲染
-  if (type !== 'table') block.insert(0, [new Y.XmlText()]);
+  const { container, block } = createEmptyBlock(blockId, type, attributes);
 
   // Yjs insert 是按数组位置插入；before 用锚点 index，after 用锚点 index + 1
-  container.insert(0, [block]);
   const index = anchor.index + (position === 'after' ? 1 : 0);
   anchor.parentGroup.insert(index, [container]);
   return { container, block, parentGroup: anchor.parentGroup, index };
+}
+
+/**
+ * 在文档根级块列表末尾插入一个 AI 建议块的结构占位
+ *
+ * 空文档没有可用锚点，新建笔记的首个 AI 建议块通过该入口写入
+ */
+export function appendEmptyRootBlock(
+  doc: Y.Doc,
+  blockId: string,
+  type: string,
+  attributes: Record<string, unknown>,
+): BlockLocation {
+  const root = doc.getXmlFragment(DOCUMENT_STORE);
+  const { container, block } = createEmptyBlock(blockId, type, attributes);
+  const index = root.length;
+  root.insert(index, [container]);
+  return { container, block, parentGroup: root, index };
 }
 
 /**

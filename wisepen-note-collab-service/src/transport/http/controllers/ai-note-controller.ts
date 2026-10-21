@@ -15,8 +15,8 @@ import {
   ApiSecurity,
   ApiTags,
 } from '@nestjs/swagger';
-import { getRoom } from '../../../application/services/yjs';
-import { Room } from '../../../application/services/yjs/types';
+import { acquireRoom, releaseRoom } from '../../../application/services/yjs';
+import { flushRoom } from '../../../application/services/yjs/yjs-snapshot-flusher';
 import { applyPatchToActiveRoom, readActiveRoom } from '../../../application/services/note-ai/service';
 import { NotePatchRequest, NoteReadRequest, NotePatchResponse } from '../../../application/services/note-ai/request-types';
 import { encodeNoteXml } from '../../../application/services/note-ai/read/note-xml-codec';
@@ -35,14 +35,6 @@ function requireResourceId(resourceId: string | undefined): string {
   return normalized;
 }
 
-function requireActiveRoom(resourceId: string): Room {
-  const room = getRoom(resourceId);
-  if (!room || room.connections.size === 0) {
-    throw new ServiceError(CommonError.REQUEST_ERROR, 'NOTE_ROOM_NOT_ACTIVE');
-  }
-  return room;
-}
-
 @ApiTags('AI Note')
 @ApiSecurity('UserID')
 @ApiHeader({
@@ -54,13 +46,13 @@ function requireActiveRoom(resourceId: string): Room {
 @Controller('internal/ai-note')
 export class AiNoteController {
   @ApiOperation({
-    summary: '按范围以紧凑 XML 读取活跃笔记',
+    summary: '按范围以紧凑 XML 读取笔记',
     description: `
-- 用途：读取当前 Sidecar 实例中的活跃协同房间，并以紧凑 XML 暴露给内部 AI 工具。
+- 用途：读取笔记的协同状态，并以紧凑 XML 暴露给内部 AI 工具；文档未打开时会从最新持久化快照加载。
 - 请求：resourceId 指定目标笔记；body 可指定 scope 和 includeAiContent。
-- 约束：当前用户必须已登录，且拥有目标资源 VIEW 权限；目标协同房间必须处于活跃状态。
-- 处理：读取活跃 Y.Doc 快照，并按 scope 裁剪；块 ID 均为笔记中真实的块 ID。
-- 失败：未登录 -> PermissionError.NOT_LOGIN；权限不足 -> PermissionError.PERMISSION_DENIED；房间未激活 -> CommonError.REQUEST_ERROR。
+- 约束：当前用户必须已登录，且拥有目标资源 VIEW 权限。
+- 处理：读取当前共享 Room 的 Y.Doc；Room 不存在时从 Note Service 冷加载，并按 scope 裁剪；块 ID 均为笔记中真实的块 ID。
+- 失败：未登录 -> PermissionError.NOT_LOGIN；权限不足 -> PermissionError.PERMISSION_DENIED。
 - 响应：成功时返回 application/xml。
     `,
   })
@@ -98,17 +90,21 @@ export class AiNoteController {
       throw new ServiceError(PermissionError.PERMISSION_DENIED);
     }
     const readRequest = (request ?? {}) as NoteReadRequest;
-    const room = requireActiveRoom(normalizedResourceId);
-    return encodeNoteXml(readActiveRoom(room, readRequest));
+    const room = await acquireRoom(normalizedResourceId);
+    try {
+      return encodeNoteXml(readActiveRoom(room, readRequest));
+    } finally {
+      releaseRoom(room);
+    }
   }
 
   @ApiOperation({
-    summary: '向活跃笔记写入 AI Diff',
+    summary: '向笔记写入 AI Diff',
     description: `
-- 用途：将内部 AI 工具生成的结构化 Diff 应用到当前 Sidecar 实例中的活跃协同房间。
+- 用途：将内部 AI 工具生成的结构化 Diff 应用到笔记；文档未打开时会从最新持久化快照加载。
 - 请求：resourceId 指定目标笔记；body 描述 patchId、version 和 operations。
-- 约束：当前用户必须已登录，且拥有目标资源 EDIT 权限；目标协同房间必须处于活跃状态；操作数量必须在 1 到 200 之间。
-- 处理：按笔记中真实的块 ID 应用 patch，写入 Y.Doc，并返回逐操作处理结果。
+- 约束：当前用户必须已登录，且拥有目标资源 EDIT 权限；操作数量必须在 1 到 200 之间。
+- 处理：在当前共享 Room 中按真实块 ID 逐项应用建议；请求版本不一致只通过 modified 返回，不阻止仍可执行的操作；发生写入时在返回前发送快照。
 - 失败：未登录 -> PermissionError.NOT_LOGIN；权限不足 -> PermissionError.PERMISSION_DENIED。
 - 响应：成功时返回处理结果。
     `,
@@ -137,13 +133,20 @@ export class AiNoteController {
     ) {
       throw new ServiceError(PermissionError.PERMISSION_DENIED);
     }
-    const room = requireActiveRoom(normalizedResourceId);
-    const data = applyPatchToActiveRoom(room, request as NotePatchRequest, userId);
-    return {
-      code: 200,
-      key: null,
-      msg: 'success',
-      data,
-    };
+    const room = await acquireRoom(normalizedResourceId);
+    try {
+      const data = applyPatchToActiveRoom(room, request as NotePatchRequest, userId);
+      if (data.resultVersion !== data.currentVersion) {
+        await flushRoom(room, { forceFull: room.connections.size === 0 });
+      }
+      return {
+        code: 200,
+        key: null,
+        msg: 'success',
+        data,
+      };
+    } finally {
+      releaseRoom(room);
+    }
   }
 }
