@@ -1,4 +1,5 @@
 import { Room } from '../../yjs/types';
+import { readTableContent } from '../read/note-ydoc-reader';
 import {
   appendEmptyRootBlock,
   findBlockLocation,
@@ -46,7 +47,11 @@ function applyReplaceOrDelete(
   const content =
     operation.kind === 'deleteBlock'
       ? emptyNoteBlockContent(type) // 生成一个“空内容建议”
-      : decodePatchContent(type, operation.content); // 把 AI patch 的内容转换成 BlockNote/Yjs 可写入的内容，作为替换建议
+      : decodePatchContent(
+        type,
+        operation.content,
+        type === 'table' ? readTableContent(location.block) : undefined,
+      ); // 替换表格时继承原表格布局，避免 AI 改内容时造成尺寸重置
 
   // 检查块类型和内容是否合法
   if (!isEditableBlockType(type)) {

@@ -150,7 +150,7 @@ function directElements(element: Y.XmlElement, names: readonly string[]): Y.XmlE
  * 读取 tableRow 下的 tableCell/tableHeader，保留单元格文本和基础布局属性，并根据连续 header 行/列推导 headerRows/headerCols
  * 列宽从第一行读取，缺失时回退 100
  */
-function readTableContent(element: Y.XmlElement): NoteTableContent {
+export function readTableContent(element: Y.XmlElement): NoteTableContent {
   const rowElements = directElements(element, ['tableRow']);
   const firstRowCells = rowElements[0]
     ? directElements(rowElements[0], ['tableCell', 'tableHeader'])
