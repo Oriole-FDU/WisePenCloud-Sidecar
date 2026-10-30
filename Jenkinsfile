@@ -1,22 +1,38 @@
 pipeline {
     agent any
 
+    options {
+        skipDefaultCheckout(true)
+        disableConcurrentBuilds()
+        timestamps()
+    }
+
     environment {
         PROJECT_NAME = 'wisepencloud'
         DOCKER_REGISTRY = 'local'
-        IMAGE_TAG = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
     }
 
     parameters {
         string(name: 'BRANCH_NAME', defaultValue: 'main', description: '选择需要构建的 Git 分支')
+        booleanParam(name: 'DEPLOY_AFTER_BUILD', defaultValue: true, description: '构建成功后是否执行部署')
+        booleanParam(name: 'PUSH_TO_REGISTRY', defaultValue: false, description: '是否额外上传镜像到用户指定的制品仓')
+        string(name: 'REGISTRY_HOST', defaultValue: '', description: '制品仓主机名和可选端口，不包含协议或路径')
+        string(name: 'REGISTRY_NAMESPACE', defaultValue: '', description: '制品仓命名空间，例如 wisepen')
     }
 
     stages {
         stage('1. 拉取代码 (Checkout)') {
             steps {
-                echo "开始拉取边车项目 ${params.BRANCH_NAME} 分支代码..."
-                checkout scm
-                echo "✅ 代码拉取成功，当前构建版本 TAG: ${IMAGE_TAG}"
+                script {
+                    def remoteUrl = scm.userRemoteConfigs[0].url
+                    echo "开始从 ${remoteUrl} 拉取边车项目 ${params.BRANCH_NAME} 分支代码..."
+                    deleteDir()
+                    git branch: params.BRANCH_NAME, url: remoteUrl
+                    env.GIT_COMMIT_FULL = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+                    env.IMAGE_TAG = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                    sh 'git status --short --branch'
+                    echo "代码拉取成功，Commit: ${env.GIT_COMMIT_FULL}，镜像 TAG: ${env.IMAGE_TAG}"
+                }
             }
         }
 
@@ -38,7 +54,51 @@ pipeline {
             }
         }
 
+        stage('2.5 上传镜像到制品仓 (Push Registry)') {
+            when {
+                expression { return params.PUSH_TO_REGISTRY }
+            }
+            steps {
+                script {
+                    if (!params.REGISTRY_HOST?.trim() || params.REGISTRY_HOST.contains('://') || params.REGISTRY_HOST.contains('/')) {
+                        error 'REGISTRY_HOST 必须填写主机名和可选端口，不能包含协议或路径。'
+                    }
+                    if (!params.REGISTRY_NAMESPACE?.trim()) {
+                        error '启用制品仓上传时必须填写 REGISTRY_NAMESPACE。'
+                    }
+                    withCredentials([
+                        usernamePassword(
+                            credentialsId: 'docker-registry-credentials',
+                            usernameVariable: 'REGISTRY_USERNAME',
+                            passwordVariable: 'REGISTRY_PASSWORD'
+                        )
+                    ]) {
+                        withEnv([
+                            "REGISTRY_HOST=${params.REGISTRY_HOST.trim()}",
+                            "REGISTRY_NAMESPACE=${params.REGISTRY_NAMESPACE.trim()}"
+                        ]) {
+                            sh '''
+                            set -eu
+                            DOCKER_CONFIG="$(mktemp -d)"
+                            export DOCKER_CONFIG
+                            trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+                            printf '%s' "$REGISTRY_PASSWORD" | docker login "$REGISTRY_HOST" \
+                                --username "$REGISTRY_USERNAME" --password-stdin
+                            source_image="${DOCKER_REGISTRY}/${PROJECT_NAME}-note-collab:${IMAGE_TAG}"
+                            target_image="${REGISTRY_HOST}/${REGISTRY_NAMESPACE}/${PROJECT_NAME}-note-collab:${IMAGE_TAG}"
+                            docker tag "$source_image" "$target_image"
+                            docker push "$target_image"
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+
         stage('3. 自动化部署 (Deploy)') {
+            when {
+                expression { return params.DEPLOY_AFTER_BUILD }
+            }
             environment {
                 NACOS_USER = credentials('nacos-username')
                 NACOS_PWD  = credentials('nacos-password')
@@ -48,46 +108,39 @@ pipeline {
                     echo "开始部署 Sidecar 最新版本: ${IMAGE_TAG} ..."
 
                     sh """
-                    # 如果没有 docker-compose，则静默下载最新独立版
-                    if ! command -v docker-compose &> /dev/null; then
-                        echo "容器内缺失 docker-compose，正在自动下载..."
-                        curl -L -# -o /usr/local/bin/docker-compose "https://github.com/docker/compose/releases/latest/download/docker-compose-\$(uname -s)-\$(uname -m)"
-                        chmod +x /usr/local/bin/docker-compose
-                    fi
+                    set -eu
+                    docker-compose version
 
                     export APP_VERSION=${IMAGE_TAG}
                     export DOCKER_REGISTRY=${DOCKER_REGISTRY}
                     export NACOS_USERNAME=\${NACOS_USER}
                     export NACOS_PASSWORD=\${NACOS_PWD}
 
-                    # 网络兼容
-                    # 检测到遗留 cloud-infra_cloud-net 时叠加 legacy-net overlay
-                    # 老中间件全部下线后，本脚本可以与docker-compose-app.legacy-net.yml文件、部署脚本中的探测分支一并删除
                     docker network create wisepen-net 2>/dev/null || true
-                    COMPOSE_FILES="-f docker-compose-app.yml"
-                    if docker network inspect cloud-infra_cloud-net >/dev/null 2>&1; then
-                        echo "检测到遗留网络 cloud-infra_cloud-net，叠加 docker-compose-app.legacy-net.yml"
-                        COMPOSE_FILES="\$COMPOSE_FILES -f docker-compose-app.legacy-net.yml"
-                    fi
-
-                    docker-compose \$COMPOSE_FILES up -d --remove-orphans
+                    docker-compose \
+                        -p wisepen-cloud-sidecar \
+                        -f docker-compose-app.yml \
+                        up -d --no-build --force-recreate --remove-orphans
                     """
                 }
             }
         }
     }
 
-    // 后置处理钩子，保持宿主机干净清爽
     post {
         always {
             echo "执行 Docker 垃圾回收..."
             sh 'docker image prune -f'
         }
         success {
-            echo "🎉 构建与部署大功告成！版本: ${IMAGE_TAG}"
+            script {
+                echo(params.DEPLOY_AFTER_BUILD
+                    ? "构建与部署大功告成！版本: ${IMAGE_TAG}"
+                    : "构建完成，已按 build-only 模式跳过部署！版本: ${IMAGE_TAG}")
+            }
         }
         failure {
-            echo "❌ 流水线执行失败，请检查 Jenkins 控制台报错日志！"
+            echo "流水线执行失败，请检查 Jenkins 控制台报错日志！"
         }
     }
 }
