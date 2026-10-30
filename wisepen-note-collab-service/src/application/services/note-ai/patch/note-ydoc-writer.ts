@@ -189,8 +189,9 @@ export function insertEmptyBlock(
 }
 
 /**
- * 在文档根级块列表末尾插入一个 AI 建议块的结构占位
+ * 在文档根级 blockGroup 的块列表末尾插入一个 AI 建议块的结构占位
  *
+ * document-store 的根级子节点必须是 blockGroup，AI blockContainer 不能直接挂在根上
  * 空文档没有可用锚点，新建笔记的首个 AI 建议块通过该入口写入
  */
 export function appendEmptyRootBlock(
@@ -200,10 +201,21 @@ export function appendEmptyRootBlock(
   attributes: Record<string, unknown>,
 ): BlockLocation {
   const root = doc.getXmlFragment(DOCUMENT_STORE);
+  let blockGroup = root
+    .toArray()
+    .find(
+      (child): child is Y.XmlElement =>
+        child instanceof Y.XmlElement && child.nodeName === 'blockGroup',
+    );
+  if (!blockGroup) {
+    blockGroup = new Y.XmlElement('blockGroup');
+    root.insert(root.length, [blockGroup]);
+  }
+
   const { container, block } = createEmptyBlock(blockId, type, attributes);
-  const index = root.length;
-  root.insert(index, [container]);
-  return { container, block, parentGroup: root, index };
+  const index = blockGroup.length;
+  blockGroup.insert(index, [container]);
+  return { container, block, parentGroup: blockGroup, index };
 }
 
 /**
