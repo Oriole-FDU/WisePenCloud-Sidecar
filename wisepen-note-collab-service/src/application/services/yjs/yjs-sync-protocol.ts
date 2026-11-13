@@ -22,11 +22,11 @@ export function handleYjsBinaryMessage(
   console.log(`[DebugYjs] room=${room.resourceId} messageType=${messageType} writable=${isWritable} intent=${currentIntent.operationType}:${currentIntent.userId}`);
 
   if (messageType === 0) { // Sync 文档同步
-    // 只读连接：仅允许 SyncStep1（状态向量握手）和 SyncStep2（服务端回包），
-    // 拒绝 SyncUpdate（messageYjsSyncType === 2）以阻止写入
+    // 只读连接仅允许入站 SyncStep1。SyncStep2 与 SyncUpdate 均会触发 Y.applyUpdate，
+    // 对只读连接采用失败关闭的白名单，避免未知 Sync 子类型绕过权限。
     const peekSyncType = decoding.peekVarUint(decoder);
-    if (!isWritable && peekSyncType === 2) {
-      return undefined; // 无编辑权限，丢弃增量更新
+    if (!isWritable && peekSyncType !== syncProtocol.messageYjsSyncStep1) {
+      return undefined;
     }
 
     encoding.writeVarUint(encoder, 0); // 写入 Message Type 0 (Sync)
